@@ -2,86 +2,81 @@
 
 **go from any bag to Rerun**
 
-Offline converter for robotics / autonomous-driving toolchains: turn recorded bags into a `.rrd` you can open in [Rerun](https://rerun.io) with one command. Formats are pluggable; v1 starts with standard ROS 2 `.db3`. Common sensor messages work out of the box; custom messages plug in without forking the core loop.
+Offline converter for robotics and autonomous-driving recordings. One command turns a stored bag into a file you can open in a visualizer. Input formats and visualizer backends are both pluggable. v1 reads a standard ROS 2 `.db3` and writes a Rerun `.rrd`.
 
-> **Status:** early — product definition locked; implementation in progress. APIs and install paths below may change.
+> **Status:** definition locked, implementation not started. The handoff notes in [`doc/`](doc/README.md) are the source of truth for the next change.
 
 ## Quick start (target UX)
 
 ```bash
-# install (details TBD once the first release lands)
+# install (details land with the first working build)
 rrd-convert convert run.db3 -o run.rrd
 rerun run.rrd
 ```
 
-Goal: a newcomer with a sample bag should see images / point clouds / TF in Rerun within about **10 minutes**.
+A newcomer with the sample bag should see images, point clouds, and TF in Rerun within about **10 minutes**. The core command does not require a ROS 2 distro.
 
-## Why this exists
+## Pipeline
 
-Stock data often lives in ROS bags. Official paths can mean multiple tools, a full ROS workspace, or learning MCAP first. `rrd-convert` keeps the **user-facing** path short: install → one command → open `.rrd`. Whether anything goes through MCAP internally is an implementation detail, not a prerequisite for the README.
+```text
+stores (pluggable)
+  → Format Adapter
+  → Input Record          topic, type, time, serialization, bytes
+  → Decoder               registered by message type
+  → Visual Primitive      image, point cloud, transform, marker
+  → Sink                  registered by engine
+  → .rrd today; Foxglove, socket, or a custom format later
+```
 
-## What v1 aims to cover
+Decoders do not know which store the bytes came from. Sinks do not know the original serialization. v1 ships one adapter and one sink: SQLite `.db3` in, Rerun `save` out. One command selects one sink.
+
+## What v1 covers
 
 | Area | Scope |
 |------|--------|
+| Language | C++17, CMake, one `rrd-convert` binary |
 | Input | Standard ROS 2 SQLite `.db3` (common CDR) |
-| Output | `.rrd` openable with `rerun` (at least `save` mode) |
-| CLI | `convert`; optional `inspect` (list topics / types) |
-| Built-in maps | Image, PointCloud2, TF / TFMessage, common Markers, … |
-| Extensibility | Format Adapter + Message Decoder / Mapper registration |
-| Docs | 5-minute getting started + minimal plugin example |
-| Optional | Simple default blueprint to help “see something fast” |
+| Output | `.rrd` openable with `rerun` in save mode |
+| CLI | `convert` |
+| Built-ins | `Image`, JPEG/PNG `CompressedImage`, `PointCloud2`, `TFMessage`, basic `Marker` / `MarkerArray` |
+| Extension | Static registration of a Format Adapter, Decoder, or Sink |
+| Sample | Synthetic `.db3` generated in-tree |
+
+`inspect`, topic filters, time trim, and batch conversion are v1.1. A small default blueprint comes after the first convert path works.
 
 ## Non-goals (v1)
 
-- Guaranteeing every vendor / in-house message (that’s what plugins are for)
-- Deep product suites (radar SDKs, video transcoding, camera projection overlays, business dashboards)
-- Full simulators, replay/eval engines, or on-vehicle live playback control
+- Covering every vendor or in-house message
+- Radar SDKs, video transcoding, camera projection overlays, business dashboards
+- Simulators, replay/eval engines, or on-vehicle playback control
 - Replacing the official MCAP toolchain, or a live ROS 2 bridge
-- Requiring a specific ROS 2 distro just to run the core path
+- Requiring a ROS 2 distro to run the core path
+- Writing more than one sink in a single command
 
-## Architecture (high level)
-
-```text
-Input (multi-format)
-    → Format Adapter   # open store, list topics, read in order
-    → Decoder          # bytes → intermediate representation
-    → Mapper           # built-in + plugins → Rerun entities
-    → Rerun Writer     # .rrd
-```
-
-The intermediate representation is the only cross-layer object, so decoders stay decoupled from the Rerun API. Users always see one command; optional later paths (e.g. raw export to MCAP) must not block v1.
-
-### Extension model
-
-1. **New input format** — implement a Format Adapter (open, list topics, sequential read) and register it.
-2. **New message type** — add intermediate struct + Decoder + Mapper; register by type name / config, not by hard-coding topic-name branches in the main loop.
-3. **Deep domain viz** — ship as a separate plugin or private package; keep it out of the public repo’s default dependencies.
-
-## Roadmap (sketch)
+## Roadmap
 
 | Stage | Focus |
 |-------|--------|
-| **v1** | ROS 2 `.db3` adapter, built-in sensor maps, plugin skeleton, sample bag, optional simple blueprint |
-| **v1.1** | `inspect`, topic filter, time trim, batch; optional `connect` mode |
-| **v2** | ROS 1 `.bag` / MCAP input adapters; optional MCAP side export |
-| Later | More format adapters and type templates; optional hooks for eval / replay pipelines |
+| **v1** | `.db3` adapter, built-in messages, Rerun save sink, static plugin skeleton, synthetic sample |
+| **v1.1** | `inspect`, topic filter, time trim, batch; optional `connect` |
+| **v2** | ROS 1 `.bag` and MCAP input adapters; another sink such as Foxglove |
+| Later | More adapters and primitive templates; optional hooks for eval or replay pipelines |
 
 ## Related tools
 
 | Project | Relation | How we differ |
 |---------|----------|----------------|
-| Official db3 → MCAP → rrd | Authoritative two-step path | One command outward; no full ROS required; docs lead with the final view |
-| [rosbag2_storage_rrd](https://github.com/rerun-io/rosbag2_storage_rrd) | Experimental recording plugin | Offline conversion of **existing** bags; not tied to a distro’s recording stack |
-| [bag2rrd](https://github.com/rerun-io/bag2rrd) | Similar shape (ROS 1–oriented) | Multi-format adapter story; v1 prioritizes ROS 2 `.db3` |
+| Official db3 → MCAP → rrd | Authoritative two-step path | One command; no full ROS install; docs lead with the view |
+| [rosbag2_storage_rrd](https://github.com/rerun-io/rosbag2_storage_rrd) | Experimental recording plugin | Converts bags that already exist; not tied to a distro recording stack |
+| [bag2rrd](https://github.com/rerun-io/bag2rrd) | Similar shape, ROS 1 leaning | Both the store and the visualizer backend are replaceable; v1 is ROS 2 `.db3` to Rerun |
 
 ## Contributing
 
-Plugin examples and design notes will land with the first working convert path. Until then, issues and discussion around formats / message types are welcome.
+Read [`doc/architecture.md`](doc/architecture.md) before adding a format, a message type, or a sink. Register the new piece. Do not add a topic-name branch to the convert loop.
 
 ## License
 
-TBD (will be set before the first release).
+TBD. It will be set before the first release.
 
 ---
 
