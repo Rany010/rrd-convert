@@ -1,0 +1,43 @@
+# Copies static archives from the rrd-convert link line into the install
+# prefix and records their file names. The Rerun SDK links Arrow through a
+# directory-local alias, so that library is not a CMake target here. Names
+# only are written into the package; this script keeps the build paths.
+set(_rrd_link_file "@CMAKE_BINARY_DIR@/CMakeFiles/rrd-convert.dir/link.txt")
+if(NOT EXISTS "${_rrd_link_file}")
+  message(FATAL_ERROR
+    "rrd-convert: missing ${_rrd_link_file}; configure the project first")
+endif()
+file(READ "${_rrd_link_file}" _rrd_link_line)
+string(REGEX MATCHALL "[^ \t\r\n\"]+\\.a" _rrd_archives "${_rrd_link_line}")
+set(_rrd_names "")
+foreach(_rrd_archive IN LISTS _rrd_archives)
+  get_filename_component(_rrd_name "${_rrd_archive}" NAME)
+  # Bare names are this project's own archives, installed with the targets.
+  if(_rrd_archive STREQUAL _rrd_name)
+    continue()
+  endif()
+  if(NOT IS_ABSOLUTE "${_rrd_archive}")
+    set(_rrd_archive "@CMAKE_BINARY_DIR@/${_rrd_archive}")
+  endif()
+  if(NOT EXISTS "${_rrd_archive}")
+    message(FATAL_ERROR
+      "rrd-convert: static library not built: ${_rrd_archive}")
+  endif()
+  file(INSTALL "${_rrd_archive}"
+    DESTINATION "${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_LIBDIR@")
+  list(APPEND _rrd_names "${_rrd_name}")
+endforeach()
+if(_rrd_names STREQUAL "")
+  message(FATAL_ERROR
+    "rrd-convert: no external static libraries on the link line")
+endif()
+set(_rrd_plugin_dir
+  "${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_LIBDIR@/cmake/rrd_convert")
+file(MAKE_DIRECTORY "${_rrd_plugin_dir}")
+set(_rrd_body "set(RRD_CONVERT_PLUGIN_LIBRARIES\n")
+foreach(_rrd_name IN LISTS _rrd_names)
+  string(APPEND _rrd_body "  \"${_rrd_name}\"\n")
+endforeach()
+string(APPEND _rrd_body ")\n")
+file(WRITE "${_rrd_plugin_dir}/rrd_convertPluginLibs.cmake" "${_rrd_body}")
+message(STATUS "Plugin link archives: ${_rrd_names}")

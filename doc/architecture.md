@@ -1,6 +1,6 @@
 # 架构与实现约定
 
-状态：开发依据，2026-11-02。代码尚未开始。按本文的代码框架和执行流程实现。不要改成按话题名分发，也不要让解码器直接调用某个可视化 SDK。
+状态：开发依据，2026-11-02。第 1 到第 9 步已完成。按本文的代码框架和执行流程实现。不要改成按话题名分发，也不要让解码器直接调用某个可视化 SDK。
 
 ## 流水线
 
@@ -49,7 +49,7 @@ Foxglove、socket 流和自定义引擎在 v1 只有接口，没有第二个 sin
 
 视频帧：H.264 / H.265 Annex B 码流原样写入，不转码。每个话题在第一个关键帧之前的帧跳过并计数。Viewer 端的限制写进用户文档：需要 FFmpeg 5.1 或更高版本；不支持 B 帧。Ubuntu 20.04 软件源里的 FFmpeg 是 4.2，用户需要另装。
 
-点云：要求 `x`、`y`、`z` 为 float32。有 `rgb` 或 `rgba` 字段时用它着色；否则有 `intensity` 时按单条消息内的强度范围映射到固定色表；都没有时不带颜色，由引擎使用默认色。
+点云：要求 `x`、`y`、`z` 为 float32。有 `rgb` 或 `rgba` 字段时用它着色；否则有 float32 的 `intensity` 时，按该条消息内的最小值到最大值映射成灰度（最小为黑，最大为白，只有一个值时为白）；都没有时不带颜色，由引擎使用默认色。大端点云失败并计数。
 
 Marker 类型：ARROW、CUBE、SPHERE、CYLINDER、LINE_STRIP、LINE_LIST、POINTS、CUBE_LIST、SPHERE_LIST、TEXT_VIEW_FACING。TRIANGLE_LIST 和 MESH_RESOURCE 跳过并计数。
 
@@ -108,14 +108,15 @@ payload          下列种类之一
 FormatAdapter
   open(input path, topic filter) -> Status
   topics() -> topic name, type name, serialization
-  message_definition(type name) -> 可选的消息定义文本
+  message_definition(type name) -> 可选的 ros2msg 文本
+  message_definition_encoding(type name) -> 可选的编码名。默认把已有文本当作 ros2msg
   next(InputRecord*) -> 有记录 / 读完 / 错误
 
 Decoder
   type_name() -> string
   decode(const InputRecord&, DecodeContext&) -> DecodeResult
     DecodeResult: 图元列表；或「跳过 + 原因」；或「失败 + 原因」
-    DecodeContext: 通用 CDR 读取入口，按类型名取得消息结构
+    DecodeContext: 通用 CDR 读取入口。message_definition 返回 ros2msg 文本；definition_source 区分没有定义、ros2msg、不支持的编码和无效文件；message_paths 是 --msg-path
 
 Sink
   name() -> string
@@ -142,17 +143,19 @@ Registry（存工厂，不存实例）
 - 输入是目录时读取其中全部 `.db3` 分片，按全局记录时间合并：每个分片各开一条按时间排序的查询，归并输出。各分片的话题 id 不同，统一按话题名对齐。
 - 目录中出现 `.zstd` 文件，或 `metadata.yaml` 里的 `compression_format` 非空时，报错并说明暂不支持压缩包。`metadata.yaml` 只按行读取这一个键，不引入 YAML 库。
 - 话题过滤在 SQL 查询里按话题 id 生效，被过滤的消息不会被读出。
-- 消息定义优先取自 bag 内嵌的定义表，其次取自 `--msg-path`。两处都没有时，自定义类型的通用解码失败并计数；内置类型不受影响，因为它们使用手写的 CDR 读取。
+- 消息定义优先取自 bag 内嵌的 `ros2msg`。bag 里只有 `ros2idl` 或其他编码时，再查找 `--msg-path`。两处都没有可用的 `ros2msg` 时，自定义类型的通用解码失败并计数；内置类型不受影响，因为它们使用手写的 CDR 读取。没有注册解码器的类型仍然记为 `no decoder`。
 - 载荷开头的 CDR 封装头不认识时，该条失败，原因记为「未知封装」。
 
 ## 通用 CDR
 
 `cdr` 库提供两层：
 
-1. `CdrReader`：按对齐规则读取基本类型、字符串、序列。内置 Decoder 直接使用。
-2. 消息结构与动态读取：解析 ROS 2 `.msg` 文本（基本类型、字符串、定长 / 有界 / 不定长数组、嵌套类型；常量跳过），得到消息结构；再按结构把载荷读成可按字段路径访问的动态消息，如 `pose.position.x`。
+1. `CdrReader`：按对齐规则读取基本类型、字符串、序列。对齐从封装头之后的第一个字节起算；4 字节及以下与从头起算相同，8 字节字段（`float64`、`int64`）按这个起点对齐。内置 Decoder 直接使用。
+2. 消息结构与动态读取：解析 ROS 2 `.msg` 文本（基本类型、字符串、定长 / 有界 / 不定长数组、嵌套类型；常量跳过），得到消息结构；再按结构把载荷读成可按字段路径访问的动态消息，如 `pose.position.x` 或 `points[0].x`。`byte` 和 `char` 都按 `uint8` 读取。`wstring` 按 ROS 2 的写法读取：先是码点个数，再是每个码点一个 `uint32`，没有结尾的 NUL。
 
-bag 内嵌的定义可能是 `ros2msg` 或 `ros2idl` 编码。v1 只支持 `ros2msg`，`ros2idl` 失败并计数。`--msg-path` 下的目录按 `<package>/msg/<Type>.msg` 查找，依赖的类型也需要在这些目录中。
+插件在解码器里调用 `read_dynamic_record(context, record, ...)`，再用 `find_path` 取字段。通用读取不会自动画任意消息。
+
+bag 内嵌的定义可能是 `ros2msg` 或 `ros2idl` 编码。v1 只支持 `ros2msg`。只有 `ros2idl` 且 `--msg-path` 也找不到 `.msg` 时，失败并计数。`--msg-path` 下的目录按 `<package>/msg/<Type>.msg` 查找，依赖的类型也需要在这些目录中。不带包名的类型按当前消息所在的包解析，`pkg/Type` 与 `pkg/msg/Type` 视为同一个类型。
 
 ## Rerun sink
 
@@ -160,12 +163,12 @@ bag 内嵌的定义可能是 `ros2msg` 或 `ros2idl` 编码。v1 只支持 `ros2
 
 | 内容 | 写法 |
 |------|------|
-| 时间线 | `log_time` 每条都写；`capture_time` 只在有消息头时间时写 |
+| 时间线 | `log_time` 每条都写；`capture_time` 只在有消息头时间时写。两者都是 Unix 纪元纳秒。没有消息头时间时关闭 `capture_time`，避免沿用上一条 |
 | 实体路径 | 默认等于话题名；有 `instance` 时为 `<话题>/<instance>` |
 | 坐标系 | 带 `frame_id` 的图元同时写 `CoordinateFrame` |
 | 坐标变换 | 写到固定实体 `/tf/<子坐标系>`，带父、子坐标系名；静态变换用静态写入 |
-| 根坐标系 | `--root-frame` 指定；不指定时取只做过父、没做过子的坐标系中出现次数最多的那个。结束时在 `/` 上静态写入该坐标系 |
-| 图像 | `Image`；深度编码写成 `DepthImage` |
+| 根坐标系 | `--root-frame` 指定；不指定时取只做过父、没做过子的坐标系中出现次数最多的那个，次数相同则取名字较小的那个。结束时在 `/` 上静态写入该坐标系 |
+| 图像 | `Image`；深度编码写成 `DepthImage`。`16UC1` 按毫米解释，`32FC1` 按米解释 |
 | 视频 | `VideoStream`，编解码器按帧里的值 |
 | 形状 | 立方体 `Boxes3D`、椭球 `Ellipsoids3D`、圆柱 `Cylinders3D` |
 | 清除 | `Clear`，整个话题时递归 |
@@ -217,11 +220,15 @@ cdr                 → 标准库
 ```text
 CMakeLists.txt
 cmake/rrd_convertConfig.cmake.in
+cmake/rrd_convertInstallPluginLibs.cmake.in
 src/core/status.hpp
+src/core/status.cpp
 src/core/input_record.hpp
 src/core/visual_primitive.hpp
 src/core/format_adapter.hpp
+src/core/format_adapter.cpp
 src/core/decoder.hpp
+src/core/decoder.cpp
 src/core/sink.hpp
 src/core/registry.hpp
 src/core/registry.cpp
@@ -229,8 +236,8 @@ src/core/conversion_summary.hpp
 src/core/conversion_summary.cpp
 src/cdr/cdr_reader.hpp
 src/cdr/cdr_reader.cpp
-src/cdr/msg_schema.hpp
-src/cdr/msg_schema.cpp
+src/cdr/msg_parser.hpp
+src/cdr/msg_parser.cpp
 src/cdr/dynamic_message.hpp
 src/cdr/dynamic_message.cpp
 src/format/ros2_db3_adapter.hpp
@@ -248,10 +255,15 @@ src/app/convert_app.hpp
 src/app/convert_app.cpp
 src/app/register_builtins.cpp
 src/main.cpp
+tests/cli_test.cpp
+tests/core_test.cpp
 tests/cdr_writer.hpp
+tests/cdr_writer.cpp
+tests/bag_fixture.hpp
+tests/bag_fixture.cpp
 tests/make_fixture_bag.cpp
 tests/cdr_reader_test.cpp
-tests/msg_schema_test.cpp
+tests/dynamic_message_test.cpp
 tests/db3_adapter_test.cpp
 tests/decoders_test.cpp
 tests/convert_test.cpp
@@ -263,7 +275,7 @@ examples/custom_decoder/main.cpp
 
 v1 的插件是静态注册，不做动态库加载。
 
-- 本项目安装一个 CMake 包：`find_package(rrd_convert)` 后可链接 `rrd_convert::app`。
+- 本项目安装一个 CMake 包：`find_package(rrd_convert)` 后可链接 `rrd_convert::app`。安装内容是可执行文件、头文件、本项目的静态库，以及可执行文件链接到的外部静态库；包里只记录这些外部库的文件名。Rerun SDK 自己的 CMake 包不安装。插件链接还需要系统的 `libsqlite3`。
 - 插件作者在自己的仓库里写一个可执行文件，调用 `rrd_convert::run_cli(argc, argv, register_fn)`。`register_fn` 在内置项之后执行，用于注册自己的 Decoder、适配器或 sink。
 - 自定义消息优先通过 `DecodeContext` 取得动态消息，只写字段到图元的映射。
 - `examples/custom_decoder` 用一个自定义消息演示以上全部，并作为最小插件文档的代码。
@@ -281,6 +293,16 @@ v1 的插件是静态注册，不做动态库加载。
 ## 发布
 
 通过 GitHub Releases 发布预编译包，先覆盖 Ubuntu 20.04 x86_64。包内含 `rrd-convert` 可执行文件，以及供插件作者使用的头文件、静态库和 CMake 包。用户文档写明配套的 Viewer 版本和 FFmpeg 要求。
+
+另提供 Docker 镜像，作为不在宿主机安装编译器、Rerun C++ SDK、Viewer 和 FFmpeg 的入口。宿主机只需要 Docker。基础镜像是 Ubuntu 24.04，在镜像内编译 `rrd-convert`，并安装 `rerun-sdk==0.28.2` 和系统 FFmpeg。这个二进制不充当 Ubuntu 20.04 预编译包。构建测试默认开启；镜像构建传入 `-DRRD_CONVERT_BUILD_TESTS=OFF`。`docker build` 需要能访问 GitHub，以下载 Rerun C++ SDK 并编译 Arrow。
+
+```bash
+docker build -t rrd-convert .
+docker run --rm -v "$PWD":/data rrd-convert convert /data/bag -o /data/run.rrd
+docker run --rm -p 9090:9090 -p 9876:9876 -v "$PWD":/data rrd-convert view /data/run.rrd
+```
+
+`view` 在容器里执行 `rerun --serve-web`，不打开容器内的浏览器。网页查看器在 9090，gRPC 在 9876。宿主机浏览器打开 `http://127.0.0.1:9090`。两个端口都要映射，因为网页里的数据连接指向宿主的 `localhost:9876`。
 
 ## 执行流程
 
@@ -334,16 +356,16 @@ flowchart TB
 
 按这个顺序做，做完一步再进入下一步。
 
-1. CMake 骨架、`core`、GoogleTest；`convert` 的参数解析和退出码。
-2. `CdrReader`、测试用 CDR 写出器及单元测试。
-3. `.db3` 适配器：单文件、目录与分片归并、话题过滤、压缩包报错、读取内嵌消息定义。同时完成 `make_fixture_bag`。
-4. 主循环、转换汇总、临时文件改名。
-5. Rerun sink 的最小路径：两条时间线、实体路径、坐标系、坐标变换、根坐标系。配合 Image、PointCloud2、TFMessage 三个解码器，跑通第一个能用 Viewer 看到图像、点云和坐标系的 `.rrd`。
-6. 其余内置解码器：CompressedImage（含视频）、CompressedVideo、Marker、MarkerArray，以及清除图元。
-7. 通用 CDR：`.msg` 解析、动态消息、`--msg-path`。
-8. 导出 CMake 包、`run_cli`、`examples/custom_decoder`。
-9. 用真实录包本地调试，修正读取和解码问题。
-10. Ubuntu 20.04 x86_64 预编译包。发布流程如果要新增 CI 配置，先确认再改。
+1. CMake 骨架、`core`、GoogleTest；`convert` 的参数解析和退出码。已完成。
+2. `CdrReader`、测试用 CDR 写出器及单元测试。已完成。只读 plain CDR（XCDR1）的小端和大端；XCDR2 会按未知封装失败。8 字节字段从封装头之后的第一个字节对齐，测试写出器使用同一规则。
+3. `.db3` 适配器：单文件、目录与分片归并、话题过滤、压缩包报错、读取内嵌消息定义。同时完成 `make_fixture_bag`。已完成。
+4. 主循环、转换汇总、临时文件改名。已完成。先打开适配器再写 `<output>.tmp`；单条跳过或失败继续读下一条；sink 关闭成功后写可选的 `--summary-json`，再把临时文件改成最终输出。打开、关闭或改名失败时删除临时文件和已写出的汇总，退出码 1。stderr 在退出前打印汇总。
+5. Rerun sink 的最小路径：两条时间线、实体路径、坐标系、坐标变换、根坐标系。配合 Image、PointCloud2、TFMessage 三个解码器。已完成。同一扩展名后注册的 sink 会替换先注册的。
+6. 其余内置解码器：CompressedImage（含视频）、CompressedVideo、Marker、MarkerArray，以及清除图元。已完成。JPEG/PNG 写成编码图像；H.264/H.265 Annex B 在每个话题的第一个关键帧之后写入，编码静态记录一次。Marker 的 ADD/MODIFY 写成半尺寸形状、箭头、线段、点或文字；DELETE 清除 `ns/id`，DELETEALL 递归清除话题。TRIANGLE_LIST 和 MESH_RESOURCE 整条消息都是这两种时跳过。标准传感器、TF 和 Marker 的 bag 可以转换。2026-11-02 用 Docker 镜像里的 Viewer 0.28.2 打开 RTAB-Map `stereo_outdoorA_bag`，左右相机的压缩图像已在网页里播放。该包还有 `/tf`，没有点云和 Marker。
+7. 通用 CDR：`.msg` 解析、动态消息、`--msg-path`。已完成。`cdr` 解析 `ros2msg` 和 `<package>/msg/<Type>.msg`，按字段路径读取 XCDR1。bag 内的 `ros2msg` 优先；只有 `ros2idl` 时改用 `--msg-path`，仍然没有定义就失败并计数。内置解码器继续用手写读取。自定义消息要有解码器把字段映射成图元，通用读取本身不画图。
+8. 导出 CMake 包、`run_cli`、`examples/custom_decoder`。已完成。`cmake --install` 安装可执行文件、头文件、静态库和 `rrd_convert` 配置。`examples/custom_decoder` 用 `find_package(rrd_convert)` 链接 `rrd_convert::app`，把 `example_msgs/msg/Detection` 读成带文字的三维点。用 bag 内 `ros2msg` 和 `--msg-path` 各转换一条合成消息，输出都是 `RRF2`，汇总 ok=1。
+9. 用真实录包本地调试，修正读取和解码问题。已完成这次能复现的读取错误。RTAB-Map `stereo_outdoorA_bag` 的 `/tf` 按封装头起算 8 字节对齐时，平移是无意义大数或直接截断。改为从封装头之后的第一个字节对齐后，抽出的 20 条 TF（62 个变换）和 3 条左目压缩图像全部成功。这份包没有点云和 Marker；没有下载到体积合适的公开 `.db3` 做同样的核对，这两类仍只由单元测试覆盖。
+10. Ubuntu 20.04 x86_64 预编译包，以及 Docker 免安装镜像。Dockerfile 已在仓库根目录。发布流程如果要新增 CI 配置，先确认再改。
 11. 默认布局。先确认 0.28.2 的 C++ SDK 能否写 blueprint；不能则保留 Viewer 的自动布局。这一步失败不回退前面的转换路径。
 
 许可证、Foxglove、socket、MCAP 输入都不在这个顺序里。

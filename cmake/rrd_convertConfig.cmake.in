@@ -1,0 +1,35 @@
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/rrd_convertTargets.cmake")
+
+set(_rrd_convert_plugin_list
+  "${CMAKE_CURRENT_LIST_DIR}/rrd_convertPluginLibs.cmake")
+if(NOT EXISTS "${_rrd_convert_plugin_list}")
+  set(${CMAKE_FIND_PACKAGE_NAME}_NOT_FOUND_MESSAGE
+    "rrd_convert is missing ${_rrd_convert_plugin_list}")
+  set(${CMAKE_FIND_PACKAGE_NAME}_FOUND FALSE)
+  return()
+endif()
+include("${_rrd_convert_plugin_list}")
+
+set(_rrd_convert_libdir "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@")
+set(_rrd_convert_plugin_libs "${RRD_CONVERT_PLUGIN_LIBRARIES}")
+set(_rrd_convert_plugin_paths "")
+foreach(_rrd_convert_lib IN LISTS _rrd_convert_plugin_libs)
+  set(_rrd_convert_path "${_rrd_convert_libdir}/${_rrd_convert_lib}")
+  if(NOT EXISTS "${_rrd_convert_path}")
+    set(${CMAKE_FIND_PACKAGE_NAME}_NOT_FOUND_MESSAGE
+      "rrd_convert is missing ${_rrd_convert_path}")
+    set(${CMAKE_FIND_PACKAGE_NAME}_FOUND FALSE)
+    return()
+  endif()
+  list(APPEND _rrd_convert_plugin_paths "${_rrd_convert_path}")
+endforeach()
+
+if(UNIX AND NOT APPLE)
+  list(APPEND _rrd_convert_plugin_paths m dl pthread rt)
+endif()
+
+target_link_libraries(rrd_convert::app INTERFACE ${_rrd_convert_plugin_paths})
+
+check_required_components(rrd_convert)

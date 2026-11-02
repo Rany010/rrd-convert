@@ -4,12 +4,19 @@
 
 Offline converter for robotics and autonomous-driving recordings. One command turns a stored bag into a file you can open in a visualizer. Input formats and visualizer backends are both pluggable. v1 reads a ROS 2 bag (SQLite storage) and writes a Rerun `.rrd`.
 
-> **Status:** definition locked, implementation not started. The handoff notes in [`doc/`](doc/README.md) are the source of truth for the next change.
+> **Status:** stages 1–9 are in the tree (CMake package and `examples/custom_decoder`, `core`, CLI, plain CDR, `.db3` adapter, convert loop, Rerun sink, the builtin sensor, TF, and Marker decoders, and generic CDR). Standard ROS 2 bags can be converted. A custom message can be read from a bag `ros2msg` definition or `--msg-path`; a decoder still maps those fields to primitives. The handoff notes in [`doc/`](doc/README.md) are the source of truth for the next change.
 
 ## Quick start (target UX)
 
 ```bash
-# Prebuilt package from GitHub Releases (Ubuntu 20.04 x86_64 first).
+# No local toolchain, Viewer, or FFmpeg. The host only needs Docker.
+docker build -t rrd-convert .
+docker run --rm -v "$PWD":/data rrd-convert convert /data/bag -o /data/run.rrd
+docker run --rm -p 9090:9090 -p 9876:9876 -v "$PWD":/data \
+  rrd-convert view /data/run.rrd
+# Then open http://127.0.0.1:9090
+
+# Or install the Ubuntu 20.04 x86_64 package from GitHub Releases.
 pip install rerun-sdk==0.28.2
 rrd-convert convert path/to/bag_dir -o run.rrd --topics /camera,/lidar,/tf
 rerun run.rrd
@@ -51,7 +58,7 @@ Decoders do not know which store the bytes came from. Sinks do not know the orig
 | Built-ins | `Image`, `CompressedImage` (JPEG, PNG, H.264, H.265), `foxglove_msgs/CompressedVideo`, `PointCloud2`, `TFMessage`, `Marker` / `MarkerArray` |
 | Custom messages | Generic CDR decoding from embedded message definitions or user `.msg` files |
 | Extension | Static registration through an exported CMake package |
-| Distribution | Prebuilt package on GitHub Releases, Ubuntu 20.04 x86_64 first |
+| Distribution | Prebuilt package on GitHub Releases, Ubuntu 20.04 x86_64 first. A Docker image is the no-install path: the host only needs Docker, and conversion plus viewing happen inside the image |
 
 `inspect`, time trim, and multi-bag batch commands are v1.1.
 
@@ -71,7 +78,7 @@ Video frames are written as-is without transcoding. Playing them in the Viewer r
 
 | Stage | Focus |
 |-------|--------|
-| **v1** | ROS 2 SQLite adapter with splits and topic filters, built-in messages, generic CDR, Rerun save sink, exported plugin package, synthetic sample, Ubuntu 20.04 release |
+| **v1** | ROS 2 SQLite adapter with splits and topic filters, built-in messages, generic CDR, Rerun save sink, exported plugin package, synthetic sample, Ubuntu 20.04 release, Docker image for running without a local toolchain or Viewer |
 | **v1.1** | `inspect`, time trim, batch; optional `connect` |
 | **v2** | ROS 1 `.bag` and MCAP input adapters; another sink such as Foxglove; compressed bags |
 | Later | More adapters and primitive templates; optional hooks for eval or replay pipelines |

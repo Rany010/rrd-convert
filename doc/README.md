@@ -1,6 +1,6 @@
 # 交接文档
 
-实现尚未开始。下一轮按下面两份文档开工，不要另起一套流水线。
+前九阶段已落地：CMake 包与 `examples/custom_decoder`、`core`、命令行、plain CDR、`.db3` 适配器、转换主循环、Rerun sink、Image、CompressedImage、CompressedVideo、PointCloud2、TFMessage、Marker、MarkerArray，以及通用 CDR。标准 ROS 2 bag 可以转换。自定义消息用 bag 内的 `ros2msg` 或 `--msg-path` 读取字段，仍要由解码器映射成图元。8 字节 CDR 字段从封装头之后的第一个字节对齐。不要另起一套流水线。
 
 | 文档 | 用途 |
 |------|------|

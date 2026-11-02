@@ -47,9 +47,9 @@ Rerun Viewer 已能直接打开 MCAP，并自动映射常见的 ROS 2 标准消�
 
 ## 用户旅程
 
-1. 安装。从 GitHub Releases 下载预编译包（v1 先提供 Ubuntu 20.04 x86_64）。Viewer 用 `pip install rerun-sdk==0.28.2`。
-2. 转换。`rrd-convert convert <bag 目录或 .db3> -o run.rrd`，需要时加 `--topics` 过滤。
-3. 打开。`rerun run.rrd`。默认可见图像、点云和坐标系。
+1. 安装。两条路：用 Docker 镜像，宿主机只需要 Docker；或者从 GitHub Releases 下载预编译包（v1 先提供 Ubuntu 20.04 x86_64），再自行安装 Viewer。
+2. 转换。`rrd-convert convert <bag 目录或 .db3> -o run.rrd`，需要时加 `--topics` 过滤。Docker 路径把 bag 目录挂进容器，同一条命令完成转换。
+3. 打开。`rerun run.rrd`。默认可见图像、点云和坐标系。Docker 路径在同一镜像里查看，宿主机不另装 Viewer 或 FFmpeg。
 4. 扩展。安装导出的 CMake 包，写自己的可执行文件，注册 Decoder、Format Adapter 或 Sink，仍用同一套命令。
 
 一次命令选择一个 sink。v1 的 sink 是 Rerun 的 save 模式。
@@ -90,7 +90,7 @@ Rerun Viewer 已能直接打开 MCAP，并自动映射常见的 ROS 2 标准消�
 - 通用 CDR：按 bag 内嵌消息定义或用户提供的 `.msg` 解析自定义消息
 - 扩展点：Format Adapter、Decoder、Sink 三套静态注册；导出 CMake 包
 - CI 友好：退出码、可解析汇总、先写临时文件再改名
-- 发布：GitHub Releases 预编译包，先覆盖 Ubuntu 20.04 x86_64
+- 发布：GitHub Releases 预编译包，先覆盖 Ubuntu 20.04 x86_64。另提供 Ubuntu 24.04 Docker 镜像，作为不在宿主机安装编译器、Rerun SDK、Viewer 和 FFmpeg 的入口
 - 测试：GoogleTest；合成样例 bag，不收录私有录包
 - 文档：5 分钟上手 + 最小插件示例。上手文档随第一条可用转换路径一起写
 
@@ -99,7 +99,7 @@ Rerun Viewer 已能直接打开 MCAP，并自动映射常见的 ROS 2 标准消�
 ## Viewer 端前提
 
 - Viewer 版本：0.28.x 或 0.29.x。更旧的 Viewer 打不开这个版本写出的 `.rrd`。
-- 视频播放：Viewer 需要 FFmpeg 5.1 或更高版本；码流不能含 B 帧。Ubuntu 20.04 软件源里的 FFmpeg 是 4.2，需要另装。
+- 视频播放：Viewer 需要 FFmpeg 5.1 或更高版本；码流不能含 B 帧。Ubuntu 20.04 软件源里的 FFmpeg 是 4.2，本机安装需要另装。Docker 镜像自带满足版本要求的 FFmpeg。
 
 ## 非目标
 
@@ -137,7 +137,7 @@ v1 明确不做：
 
 | 阶段 | 内容 |
 |------|------|
-| v1 | ROS 2 SQLite 适配器（含分片和话题过滤）、内置消息、通用 CDR、Rerun save sink、静态注册与导出 CMake 包、合成样例、Ubuntu 20.04 预编译包 |
+| v1 | ROS 2 SQLite 适配器（含分片和话题过滤）、内置消息、通用 CDR、Rerun save sink、静态注册与导出 CMake 包、合成样例、Ubuntu 20.04 预编译包、Docker 免安装镜像 |
 | v1.1 | `inspect`、时间裁剪、批处理命令；可选 `connect` |
 | v2 | ROS 1 `.bag` 和 MCAP 输入适配器；Foxglove 或其它 sink；压缩 bag |
 | 之后 | 更多适配器、图元模板；评测或回灌流水线的可选钩子 |
@@ -153,6 +153,7 @@ v1 明确不做：
 - 视频帧原样写入，不转码
 - 测试用 GoogleTest
 - 实现开始后用真实录包本地调试
+- Docker 镜像是免安装入口：Ubuntu 24.04，宿主机只需要 Docker。镜像内编译转换器，并带 Viewer 0.28.2 与 FFmpeg 5.1 或更高版本。查看用网页端口 9090 和 gRPC 端口 9876。该二进制不是 Ubuntu 20.04 预编译包
 
 ## 未决
 
