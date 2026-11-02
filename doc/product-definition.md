@@ -59,7 +59,7 @@ rrd-convert 给智能驾驶和机器人工具链做离线转换。一条命令�
 - 可视化中间表示是解码器的唯一出口。Sink 不看见原始字节，也不看见 ROS 类型。
 - v1 只实现 ROS 2 `.db3` 适配器和 Rerun `.rrd` sink。其它适配器和 sink 只留注册接口。
 
-接口、消息清单和实现顺序见 [architecture.md](architecture.md)。
+代码框架、执行流程、接口和实现顺序见 [architecture.md](architecture.md)。
 
 ## 扩展模型
 

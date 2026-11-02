@@ -1,6 +1,6 @@
 # 架构与实现约定
 
-状态：交接基线，2026-10-30。代码尚未开始。按本文实现，不要改成按话题名分发，也不要让解码器直接调用某个可视化 SDK。
+状态：开发依据，2026-11-02。代码尚未开始。按本文的代码框架和执行流程实现。不要改成按话题名分发，也不要让解码器直接调用某个可视化 SDK。
 
 ## 流水线
 
@@ -86,6 +86,81 @@ Registry
 
 打开 bag 或打开输出失败时用异常，带上路径和失败原因。单条消息失败时返回状态，记下类型和话题，然后继续。
 
+## 代码框架
+
+五个静态库加一个可执行文件。库之间只传递 `InputRecord` 和 `VisualPrimitive`。
+
+```text
+rrd-convert
+  └── app
+        ├── format      → record，libsqlite3
+        ├── decode      → record，cdr
+        └── sink_rerun  → record，Rerun C++ SDK
+```
+
+| 目标 | 允许依赖 | 内容 |
+|------|----------|------|
+| `record` | 标准库 | `InputRecord`、`VisualPrimitive` |
+| `format` | `record`、`libsqlite3` | `FormatAdapter`、`Ros2Db3Adapter` |
+| `decode` | `record`、仓库内 CDR 读取 | `Decoder`、按类型名查找的注册表 |
+| `sink_rerun` | `record`、Rerun SDK | `Sink`、`RerunSink` |
+| `app` | 上面四层 | 注册表装配与 `convert` 主循环 |
+| `rrd-convert` | `app` | 解析 `convert <input.db3> -o <output.rrd>` |
+
+`decode` 不包含 Rerun 头文件。`format` 不包含解码或 sink 头文件。`sink_rerun` 不包含 SQLite 或解码头文件。命名空间是 `rrd_convert`。
+
+```text
+CMakeLists.txt
+src/main.cpp
+src/record/input_record.hpp
+src/record/visual_primitive.hpp
+src/format/format_adapter.hpp
+src/format/ros2_db3_adapter.hpp
+src/format/ros2_db3_adapter.cpp
+src/decode/decoder.hpp
+src/decode/decoder_registry.hpp
+src/decode/decoder_registry.cpp
+src/decode/register_builtins.cpp
+src/sink/sink.hpp
+src/sink/sink_registry.hpp
+src/sink/rerun_sink.hpp
+src/sink/rerun_sink.cpp
+src/app/convert_app.hpp
+src/app/convert_app.cpp
+src/cdr/cdr_reader.hpp
+src/cdr/cdr_reader.cpp
+tests/db3_adapter_test.cpp
+```
+
+v1 的六个内置解码器先放在 `register_builtins.cpp`。某一种消息膨胀后再拆文件。`tests/db3_adapter_test.cpp` 只检查读包和 `InputRecord`，不链接 Rerun。
+
+注册表用 `std::unique_ptr` 持有解码器和 sink。`main` 调用一次 `register_builtins()`。以后的插件再调用一次注册函数，不修改 `convert` 循环。命令行只有 `convert`、输入路径和 `-o`，解析放在 `main.cpp`，不引入命令行库。
+
+## 执行流程
+
+一次转换按下面的顺序执行。打开 bag 或打开输出失败时停止，错误信息带路径。单条消息没有解码器，或这一条解码失败时，计数后继续读下一条。
+
+```mermaid
+flowchart TB
+  cmd["rrd-convert convert input.db3 -o out.rrd"] --> reg["注册内置适配器、解码器、Rerun sink"]
+  reg --> openBag["按 .db3 打开 Format Adapter"]
+  openBag -->|打不开| stop["停止，错误里带路径"]
+  openBag --> openSink["按 .rrd 打开 Rerun sink"]
+  openSink -->|打不开| stop
+  openSink --> read["读下一条"]
+  read -->|没有更多| close["关闭 sink，打印跳过计数"]
+  close --> done["out.rrd"]
+  read -->|得到 InputRecord| find{"用类型名查找解码器"}
+  find -->|没有| count["跳过并计数"]
+  count --> read
+  find -->|有| decode["解码成一个或多个 VisualPrimitive"]
+  decode -->|本条失败| count
+  decode --> write["sink 按图元种类写入"]
+  write --> read
+```
+
+`.db3` 选择 `Ros2Db3Adapter`。`.rrd` 选择 `RerunSink`。时间线名称是 `capture_time`。实体路径默认等于话题名。
+
 ## 构建
 
 - C++17，CMake，可执行文件名 `rrd-convert`
@@ -94,18 +169,6 @@ Registry
 - `libsqlite3` 用系统库
 - 命名和格式按 Google C++ Style：类型 `CamelCase`，函数和变量 `snake_case`，私有成员尾部下划线，常量 `kCamelCase`，缩进 2 空格
 - 注释、日志和错误信息用英文
-
-建议目录，实现时可以微调文件名，不要打乱三层边界：
-
-```text
-CMakeLists.txt
-src/main.cpp
-src/format/          Format Adapter 与 ROS 2 .db3 读取
-src/record/          Input Record 与 Visual Primitive
-src/decode/          Decoder 与注册表
-src/sink/            Sink 接口与 Rerun save
-src/app/             convert 主循环
-```
 
 ## 明确不做
 
