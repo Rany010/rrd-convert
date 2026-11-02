@@ -97,7 +97,7 @@ Read [`doc/architecture.md`](doc/architecture.md) before adding a format, a mess
 
 ## License
 
-TBD. It will be set before the first release.
+Released under the [MIT License](LICENSE). Copyright (c) 2026 Rany010.
 
 ---
 
