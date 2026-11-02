@@ -6,6 +6,7 @@
 |------|------|
 | [product-definition.md](product-definition.md) | 产品范围、非目标、成功标准和路线图 |
 | [architecture.md](architecture.md) | 代码框架、执行流程、接口、v1 消息和实现顺序 |
+| [open-questions.md](open-questions.md) | 未决项和实现中需要先验证的事项 |
 
 公开简介在仓库根目录的 `README.md`。两边若有出入，以 `doc/` 为准。
 
