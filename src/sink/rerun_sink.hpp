@@ -8,6 +8,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace rerun {
 class RecordingStream;
@@ -47,7 +48,11 @@ class RerunSink : public Sink {
   void set_timelines(const VisualPrimitive& primitive);
   std::string entity_path(const VisualPrimitive& primitive) const;
 
+  void remember_image(const std::string& path);
+
   std::unique_ptr<rerun::RecordingStream> stream_;
+  std::string path_;
+  std::vector<std::string> image_paths_;
   std::optional<std::string> requested_root_;
   std::unordered_map<std::string, int> parent_counts_;
   std::unordered_set<std::string> child_frames_;

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <unistd.h>
 #include <unordered_map>
 #include <unordered_set>
@@ -98,6 +99,9 @@ TEST(RerunSink, WritesAnRrdForImagePointsAndTransforms) {
   input.read(magic, 4);
   EXPECT_EQ(std::string(magic, 4), "RRF2");
   EXPECT_GT(std::filesystem::file_size(output), 4u);
+  std::ostringstream rest;
+  rest << input.rdbuf();
+  EXPECT_NE(rest.str().find("ViewportBlueprint"), std::string::npos);
   std::filesystem::remove_all(root);
 }
 

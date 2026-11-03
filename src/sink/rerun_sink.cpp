@@ -3,9 +3,19 @@
 #include "sink/root_frame.hpp"
 
 #include <rerun.hpp>
+#include <rerun/blueprint/archetypes/container_blueprint.hpp>
+#include <rerun/blueprint/archetypes/view_blueprint.hpp>
+#include <rerun/blueprint/archetypes/view_contents.hpp>
+#include <rerun/blueprint/archetypes/viewport_blueprint.hpp>
 
 #include <algorithm>
+#include <array>
+#include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <exception>
+#include <fstream>
+#include <iostream>
 #include <utility>
 #include <vector>
 
@@ -102,6 +112,171 @@ std::vector<uint8_t> pack_nv12(const ImagePayload& image) {
   return packed;
 }
 
+constexpr int kMaxCameraViews = 8;
+
+bool read_uuid(std::array<uint8_t, 16>* out) {
+  std::ifstream random("/dev/urandom", std::ios::binary);
+  if (!random.read(reinterpret_cast<char*>(out->data()),
+                   static_cast<std::streamsize>(out->size()))) {
+    return false;
+  }
+  (*out)[6] = static_cast<uint8_t>(((*out)[6] & 0x0f) | 0x40);
+  (*out)[8] = static_cast<uint8_t>(((*out)[8] & 0x3f) | 0x80);
+  return true;
+}
+
+std::string format_uuid(const std::array<uint8_t, 16>& bytes) {
+  static constexpr char kHex[] = "0123456789abcdef";
+  std::string text;
+  text.reserve(36);
+  for (size_t i = 0; i < bytes.size(); ++i) {
+    if (i == 4 || i == 6 || i == 8 || i == 10) {
+      text.push_back('-');
+    }
+    text.push_back(kHex[bytes[i] >> 4]);
+    text.push_back(kHex[bytes[i] & 0x0f]);
+  }
+  return text;
+}
+
+Status log_view(rerun::RecordingStream* stream, const std::string& id,
+                const char* view_class, const char* name, const std::string& origin,
+                const std::string& query) {
+  const std::string path = "view/" + id;
+  std::vector<rerun::blueprint::components::QueryExpression> queries;
+  queries.emplace_back(query);
+  rerun::Error error = stream->try_log(
+      path + "/ViewContents",
+      rerun::blueprint::archetypes::ViewContents(std::move(queries)));
+  if (error.is_err()) {
+    return from_rerun(error);
+  }
+  error = stream->try_log(
+      path, rerun::blueprint::archetypes::ViewBlueprint(
+                rerun::blueprint::components::ViewClass(std::string(view_class)))
+                .with_display_name(rerun::components::Name(name))
+                .with_space_origin(rerun::blueprint::components::ViewOrigin(origin)));
+  return from_rerun(error);
+}
+
+Status log_container(rerun::RecordingStream* stream, const std::string& id,
+                     rerun::blueprint::components::ContainerKind kind,
+                     const std::vector<std::string>& child_paths,
+                     const std::vector<float>& shares) {
+  std::vector<rerun::blueprint::components::IncludedContent> contents;
+  contents.reserve(child_paths.size());
+  for (const std::string& child : child_paths) {
+    contents.emplace_back(child);
+  }
+  auto container =
+      rerun::blueprint::archetypes::ContainerBlueprint().with_container_kind(kind).with_contents(
+          std::move(contents));
+  if (kind == rerun::blueprint::components::ContainerKind::Horizontal &&
+      shares.size() == child_paths.size()) {
+    std::vector<rerun::blueprint::components::ColumnShare> columns;
+    columns.reserve(shares.size());
+    for (float share : shares) {
+      columns.emplace_back(share);
+    }
+    container = std::move(container).with_col_shares(std::move(columns));
+  }
+  if (kind == rerun::blueprint::components::ContainerKind::Vertical &&
+      shares.size() == child_paths.size()) {
+    std::vector<rerun::blueprint::components::RowShare> rows;
+    rows.reserve(shares.size());
+    for (float share : shares) {
+      rows.emplace_back(share);
+    }
+    container = std::move(container).with_row_shares(std::move(rows));
+  }
+  return from_rerun(stream->try_log("container/" + id, std::move(container)));
+}
+
+Status write_blueprint_file(const std::string& path,
+                            const std::vector<std::string>& image_paths) {
+  std::array<uint8_t, 16> root_id{};
+  std::array<uint8_t, 16> scene_id{};
+  std::array<uint8_t, 16> cameras_id{};
+  if (!read_uuid(&root_id) || !read_uuid(&scene_id) || !read_uuid(&cameras_id)) {
+    return Status::Error(path, "could not read /dev/urandom");
+  }
+  const std::string root = format_uuid(root_id);
+  const std::string scene = format_uuid(scene_id);
+  const std::string cameras = format_uuid(cameras_id);
+
+  rerun::RecordingStream stream("rrd-convert", "blueprint",
+                                rerun::StoreKind::Blueprint);
+  const rerun::Error saved = stream.save(path);
+  if (saved.is_err()) {
+    return from_rerun(saved);
+  }
+  stream.set_time_sequence("blueprint", 0);
+
+  Status status = log_view(&stream, scene, "3D", "Scene", "/", "+ /**");
+  std::vector<std::string> root_children = {"view/" + scene};
+  std::vector<float> root_shares = {1.f};
+  const size_t camera_count =
+      std::min(image_paths.size(), static_cast<size_t>(kMaxCameraViews));
+  if (camera_count > 0) {
+    std::vector<std::string> camera_children;
+    std::vector<float> camera_shares;
+    std::vector<std::array<uint8_t, 16>> camera_ids(camera_count);
+    for (size_t i = 0; i < camera_count; ++i) {
+      if (!read_uuid(&camera_ids[i])) {
+        return Status::Error(path, "could not read /dev/urandom");
+      }
+      const std::string id = format_uuid(camera_ids[i]);
+      const std::string& entity = image_paths[i];
+      const std::string::size_type slash = entity.find_last_of('/');
+      const std::string name =
+          slash == std::string::npos ? entity : entity.substr(slash + 1);
+      status = log_view(&stream, id, "2D", name.c_str(), entity, "+ " + entity + "/**");
+      if (!status.ok()) {
+        return status;
+      }
+      camera_children.push_back("view/" + id);
+      camera_shares.push_back(1.f);
+    }
+    status = log_container(&stream, cameras,
+                           rerun::blueprint::components::ContainerKind::Vertical,
+                           camera_children, camera_shares);
+    if (!status.ok()) {
+      return status;
+    }
+    root_children.push_back("container/" + cameras);
+    root_shares = {2.f, 1.f};
+  }
+  status = log_container(&stream, root,
+                         rerun::blueprint::components::ContainerKind::Horizontal,
+                         root_children, root_shares);
+  if (!status.ok()) {
+    return status;
+  }
+  const rerun::Error logged = stream.try_log(
+      "viewport",
+      rerun::blueprint::archetypes::ViewportBlueprint()
+          .with_root_container(root_id)
+          .with_auto_layout(false)
+          .with_auto_views(false));
+  if (logged.is_err()) {
+    return from_rerun(logged);
+  }
+  return from_rerun(stream.flush_blocking());
+}
+
+Status append_file(const std::string& destination, const std::string& source) {
+  std::ifstream input(source, std::ios::binary);
+  std::ofstream output(destination, std::ios::binary | std::ios::app);
+  if (!input || !output) {
+    return Status::Error(destination, "could not append the default blueprint");
+  }
+  output << input.rdbuf();
+  if (!output) {
+    return Status::Error(destination, "could not append the default blueprint");
+  }
+  return Status::Ok();
+}
+
 }  // namespace
 
 RerunSink::RerunSink() = default;
@@ -121,6 +296,8 @@ Status RerunSink::open(const std::string& path, const SinkOptions& options) {
     return Status::Error(path, saved.description.empty() ? "failed to open output"
                                                         : saved.description);
   }
+  path_ = path;
+  image_paths_.clear();
   requested_root_ = options.root_frame;
   parent_counts_.clear();
   child_frames_.clear();
@@ -152,6 +329,14 @@ std::string RerunSink::entity_path(const VisualPrimitive& primitive) const {
     path += *primitive.instance;
   }
   return path;
+}
+
+void RerunSink::remember_image(const std::string& path) {
+  if (std::find(image_paths_.begin(), image_paths_.end(), path) !=
+      image_paths_.end()) {
+    return;
+  }
+  image_paths_.push_back(path);
 }
 
 Status RerunSink::log_transform(const VisualPrimitive& primitive,
@@ -498,6 +683,11 @@ Status RerunSink::write(const VisualPrimitive& primitive) {
   if (!open_ || stream_ == nullptr) {
     return Status::Error("", "sink is not open");
   }
+  if (std::holds_alternative<ImagePayload>(primitive.payload) ||
+      std::holds_alternative<EncodedImagePayload>(primitive.payload) ||
+      std::holds_alternative<VideoFramePayload>(primitive.payload)) {
+    remember_image(entity_path(primitive));
+  }
   if (const auto* transform = std::get_if<TransformPayload>(&primitive.payload)) {
     return log_transform(primitive, *transform);
   }
@@ -545,7 +735,31 @@ Status RerunSink::close() {
     error = stream_->flush_blocking();
   }
   stream_.reset();
+  if (error.is_ok()) {
+    const std::string blueprint_path = path_ + ".blueprint";
+    try {
+      const Status blueprint = write_blueprint_file(blueprint_path, image_paths_);
+      if (!blueprint.ok()) {
+        std::cerr << "warning: " << path_
+                  << ": default blueprint was not written: " << blueprint.reason()
+                  << "\n";
+      } else {
+        const Status appended = append_file(path_, blueprint_path);
+        if (!appended.ok()) {
+          std::cerr << "warning: " << path_
+                    << ": default blueprint was not written: " << appended.reason()
+                    << "\n";
+        }
+      }
+    } catch (const std::exception& ex) {
+      std::cerr << "warning: " << path_
+                << ": default blueprint was not written: " << ex.what() << "\n";
+    }
+    std::remove(blueprint_path.c_str());
+  }
   open_ = false;
+  path_.clear();
+  image_paths_.clear();
   parent_counts_.clear();
   child_frames_.clear();
   video_codecs_.clear();

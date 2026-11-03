@@ -1,6 +1,6 @@
 # 架构与实现约定
 
-状态：开发依据，2026-11-02。第 1 到第 9 步已完成。按本文的代码框架和执行流程实现。不要改成按话题名分发，也不要让解码器直接调用某个可视化 SDK。
+状态：开发依据，2026-11-02。第 1 到第 11 步已完成。按本文的代码框架和执行流程实现。不要改成按话题名分发，也不要让解码器直接调用某个可视化 SDK。
 
 ## 流水线
 
@@ -292,7 +292,7 @@ v1 的插件是静态注册，不做动态库加载。
 
 ## 发布
 
-通过 GitHub Releases 发布预编译包，先覆盖 Ubuntu 20.04 x86_64。包内含 `rrd-convert` 可执行文件，以及供插件作者使用的头文件、静态库和 CMake 包。用户文档写明配套的 Viewer 版本和 FFmpeg 要求。
+通过 GitHub Releases 发布预编译包，先覆盖 Ubuntu 20.04 x86_64。包内含 `rrd-convert` 可执行文件，以及供插件作者使用的头文件、静态库和 CMake 包。用户文档写明配套的 Viewer 版本和 FFmpeg 要求。`scripts/package_ubuntu2004.sh` 在 Ubuntu 20.04 x86_64 上执行 `cmake --install` 并打成 `dist/rrd-convert-0.1.0-ubuntu20.04-x86_64.tar.gz`。`dist/` 不入库。不带参数时脚本配置 Release 的 `build-release`；`--build-dir` 安装已有构建树。正式发布用 Release。这次在本机用已有的 Debug 构建核对过包布局和可执行文件，没有创建 GitHub Release，也没有加 CI。
 
 另提供 Docker 镜像，作为不在宿主机安装编译器、Rerun C++ SDK、Viewer 和 FFmpeg 的入口。宿主机只需要 Docker。基础镜像是 Ubuntu 24.04，在镜像内编译 `rrd-convert`，并安装 `rerun-sdk==0.28.2` 和系统 FFmpeg。这个二进制不充当 Ubuntu 20.04 预编译包。构建测试默认开启；镜像构建传入 `-DRRD_CONVERT_BUILD_TESTS=OFF`。`docker build` 需要能访问 GitHub，以下载 Rerun C++ SDK 并编译 Arrow。
 
@@ -365,7 +365,7 @@ flowchart TB
 7. 通用 CDR：`.msg` 解析、动态消息、`--msg-path`。已完成。`cdr` 解析 `ros2msg` 和 `<package>/msg/<Type>.msg`，按字段路径读取 XCDR1。bag 内的 `ros2msg` 优先；只有 `ros2idl` 时改用 `--msg-path`，仍然没有定义就失败并计数。内置解码器继续用手写读取。自定义消息要有解码器把字段映射成图元，通用读取本身不画图。
 8. 导出 CMake 包、`run_cli`、`examples/custom_decoder`。已完成。`cmake --install` 安装可执行文件、头文件、静态库和 `rrd_convert` 配置。`examples/custom_decoder` 用 `find_package(rrd_convert)` 链接 `rrd_convert::app`，把 `example_msgs/msg/Detection` 读成带文字的三维点。用 bag 内 `ros2msg` 和 `--msg-path` 各转换一条合成消息，输出都是 `RRF2`，汇总 ok=1。
 9. 用真实录包本地调试，修正读取和解码问题。已完成这次能复现的读取错误。RTAB-Map `stereo_outdoorA_bag` 的 `/tf` 按封装头起算 8 字节对齐时，平移是无意义大数或直接截断。改为从封装头之后的第一个字节对齐后，抽出的 20 条 TF（62 个变换）和 3 条左目压缩图像全部成功。这份包没有点云和 Marker；没有下载到体积合适的公开 `.db3` 做同样的核对，这两类仍只由单元测试覆盖。
-10. Ubuntu 20.04 x86_64 预编译包，以及 Docker 免安装镜像。Dockerfile 已在仓库根目录。发布流程如果要新增 CI 配置，先确认再改。
-11. 默认布局。先确认 0.28.2 的 C++ SDK 能否写 blueprint；不能则保留 Viewer 的自动布局。这一步失败不回退前面的转换路径。
+10. Ubuntu 20.04 x86_64 预编译包，以及 Docker 免安装镜像。已完成打包脚本和镜像定义。Dockerfile 在仓库根目录。`scripts/package_ubuntu2004.sh --build-dir build` 在本机 Ubuntu 20.04 x86_64 上安装已有 Debug 构建，包内有可执行文件、头文件、静态库、`libarrow.a` 和 CMake 配置，无参数运行退出码为 2。安装出的 `include` 和 `lib/cmake` 里没有本机构建路径。tarball 在 `dist/`，不入库，也还不是 GitHub Release 资产。发布用的包应是 Release 构建。没有新增 CI。
+11. 默认布局。已完成。0.28.2 的 C++ SDK 能把 blueprint 写进 `StoreKind::Blueprint`，但 `save(path)` 不能像 Python 那样附上默认布局。数据流 `flush_blocking` 并销毁之后，把同一应用 id `rrd-convert` 的 blueprint 流追加到同一个 `.rrd`。布局是一个横向根容器：左侧 3D 视图 `Scene`，原点 `/`，查询 `+ /**`；若写出了图像或视频，右侧最多 8 个 2D 视图，每个对应一条实体路径。`auto_layout` 和 `auto_views` 为 false。追加失败或抛异常时向 stderr 打警告，转换仍成功。镜像内的 Viewer 0.28.2 对含这条布局的样例执行 `rerun rrd verify` 通过，并读出 `3D`/`Scene` 和 `2D` 视图。
 
 许可证、Foxglove、socket、MCAP 输入都不在这个顺序里。
