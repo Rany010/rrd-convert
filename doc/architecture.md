@@ -292,7 +292,7 @@ v1 的插件是静态注册，不做动态库加载。
 
 ## 发布
 
-通过 GitHub Releases 发布预编译包，先覆盖 Ubuntu 20.04 x86_64。包内含 `rrd-convert` 可执行文件，以及供插件作者使用的头文件、静态库和 CMake 包。用户文档写明配套的 Viewer 版本和 FFmpeg 要求。`scripts/package_ubuntu2004.sh` 在 Ubuntu 20.04 x86_64 上执行 `cmake --install` 并打成 `dist/rrd-convert-0.1.0-ubuntu20.04-x86_64.tar.gz`。`dist/` 不入库。不带参数时脚本配置 Release 的 `build-release`；`--build-dir` 安装已有构建树。正式发布用 Release。这次在本机用已有的 Debug 构建核对过包布局和可执行文件，没有创建 GitHub Release，也没有加 CI。
+通过 GitHub Releases 发布预编译包，先覆盖 Ubuntu 20.04 x86_64。包内含 `rrd-convert` 可执行文件，以及供插件作者使用的头文件、静态库和 CMake 包。用户文档写明配套的 Viewer 版本和 FFmpeg 要求。`scripts/package_ubuntu2004.sh` 在 Ubuntu 20.04 x86_64 上执行 `cmake --install` 并打成 `dist/rrd-convert-0.1.0-ubuntu20.04-x86_64.tar.gz`。`dist/` 不入库。不带参数时脚本配置 Release 的 `build-release`；`--build-dir` 安装已有构建树。正式发布用 Release，并把该压缩包挂到 GitHub Release。GitHub Actions 在 Ubuntu 24.04 上编译并跑测试；那个二进制不是 Ubuntu 20.04 发布包。
 
 另提供 Docker 镜像，作为不在宿主机安装编译器、Rerun C++ SDK、Viewer 和 FFmpeg 的入口。宿主机只需要 Docker。基础镜像是 Ubuntu 24.04，在镜像内编译 `rrd-convert`，并安装 `rerun-sdk==0.28.2` 和系统 FFmpeg。这个二进制不充当 Ubuntu 20.04 预编译包。构建测试默认开启；镜像构建传入 `-DRRD_CONVERT_BUILD_TESTS=OFF`。`docker build` 需要能访问 GitHub，以下载 Rerun C++ SDK 并编译 Arrow。
 

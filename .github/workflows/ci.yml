@@ -1,0 +1,46 @@
+# Compile and test on each push. The first run downloads the Rerun C++ SDK 0.28.2
+# and builds Arrow, which is slow. This job does not produce the Ubuntu 20.04
+# release archive. Build that on an Ubuntu 20.04 host with
+# scripts/package_ubuntu2004.sh and attach it to a GitHub Release.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            cmake \
+            curl \
+            libsqlite3-dev \
+            ninja-build \
+            pkg-config
+
+      - name: Cache SDK downloads and Arrow
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/downloads
+            build/_deps
+          key: rrd-convert-ubuntu2404-rerun-0.28.2-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure

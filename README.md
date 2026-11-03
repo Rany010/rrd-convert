@@ -14,7 +14,7 @@ flowchart LR
 
 The host does not need a ROS 2 distro. The Viewer must be 0.28.x or 0.29.x. An older Viewer cannot open this `.rrd`.
 
-> **Status:** the converter, builtin decoders, generic CDR reader, CMake package, Docker image definition, Ubuntu 20.04 packaging script, and a default Viewer layout are in the tree. A GitHub Release binary is not published.
+> **Status:** the converter, builtin decoders, generic CDR reader, CMake package, Docker image definition, default Viewer layout, and GitHub Actions tests are in the tree. The Ubuntu 20.04 x86_64 package is attached to [GitHub Releases](https://github.com/Rany010/rrd-convert/releases).
 
 ## See it on a public bag
 
@@ -65,7 +65,7 @@ cmake --build build
 
 Open `run.rrd` with a 0.28.x or 0.29.x Viewer (`pip install rerun-sdk==0.28.2`, then `rerun run.rrd`). Ubuntu 20.04's apt FFmpeg is 4.2, which is too old to play the H.264 and H.265 frames this tool writes. The Docker image includes a new enough FFmpeg.
 
-`scripts/package_ubuntu2004.sh` packs an Ubuntu 20.04 x86_64 install tree. Run it on that release. With no arguments it configures a Release build in `build-release`. `--build-dir` installs a tree you already built. The tarball goes to `dist/`, which is gitignored. It is not a GitHub Release asset.
+`scripts/package_ubuntu2004.sh` packs an Ubuntu 20.04 x86_64 install tree. Run it on that release. With no arguments it configures a Release build in `build-release`. `--build-dir` installs a tree you already built. The tarball goes to `dist/`, which is gitignored. The same archive is what a GitHub Release publishes. CI compiles and tests on Ubuntu 24.04; that job does not upload the release archive.
 
 ```text
 rrd-convert convert <bag-dir|file.db3> -o <out.rrd>
