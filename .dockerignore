@@ -1,4 +1,6 @@
 .git
 build
+build-release
+dist
 cmake-build-*
 *.rrd

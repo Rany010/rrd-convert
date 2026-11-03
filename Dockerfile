@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /src
 COPY CMakeLists.txt ./
+COPY cmake ./cmake
 COPY src ./src
 
 ARG RRD_CONVERT_RERUN_URL=https://github.com/rerun-io/rerun/releases/download/0.28.2/rerun_cpp_sdk.zip
